@@ -1,27 +1,71 @@
+"""
+推薦 API
+- 本機執行：python api.py                （http://127.0.0.1:5000）
+- 實驗室平台：HOST=0.0.0.0 python api.py   （讓 Open WebUI 容器連得到）
+沒有安裝 Flask 時，會自動改用 Python 內建的 http.server，不需要額外套件。
+"""
+import json
 import os
 import sys
-from flask import Flask, request, jsonify
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
-from recommender import search_restaurants, format_results, to_records
+from recommender import search_restaurants, format_results, to_records  # noqa: E402
 
-app = Flask(__name__)
+HOST = os.environ.get("HOST", "127.0.0.1")
+PORT = int(os.environ.get("PORT", "5000"))
 
 
-@app.route('/recommend', methods=['POST'])
-def recommend():
-    data = request.json or {}
+def handle_recommend(data: dict) -> dict:
     results, error = search_restaurants(
-        district=data.get('district'),
-        category=data.get('category'),
-        party_size=data.get('party_size'),
-        budget=data.get('budget'),
+        district=data.get("district"),
+        category=data.get("category"),
+        party_size=data.get("party_size"),
+        budget=data.get("budget"),
     )
     if error:
-        return jsonify({"result": error, "restaurants": []})
+        return {"result": error, "restaurants": []}
     # result：顯示用文字；restaurants：結構化資料，給 LLM 寫推薦理由
-    return jsonify({"result": format_results(results), "restaurants": to_records(results)})
+    return {"result": format_results(results), "restaurants": to_records(results)}
 
 
-if __name__ == '__main__':
-    app.run(port=5000)
+try:
+    from flask import Flask, request, jsonify
+
+    app = Flask(__name__)
+
+    @app.route("/recommend", methods=["POST"])
+    def recommend():
+        return jsonify(handle_recommend(request.json or {}))
+
+    def run():
+        app.run(host=HOST, port=PORT)
+
+except ImportError:  # 沒有 Flask：改用內建伺服器
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    app = None
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/recommend":
+                self.send_error(404)
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except json.JSONDecodeError:
+                data = {}
+            body = json.dumps(handle_recommend(data), ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    def run():
+        print(f" * Running on http://{HOST}:{PORT}（內建伺服器，未安裝 Flask）")
+        ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    run()

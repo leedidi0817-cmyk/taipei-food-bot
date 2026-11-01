@@ -1,7 +1,7 @@
 """
 title: Taipei Restaurant Recommendation Pipe
 author: Taipei Food Bot
-version: 3.0.0
+version: 3.1.0
 description: 全台北市美食餐廳推薦系統 Pipe（LLM 理解需求 + 加權推薦 + 推薦理由）
 """
 
@@ -22,6 +22,52 @@ CATEGORIES = [
     "火鍋", "燒肉", "日式料理", "拉麵", "義式料理", "平價小吃",
     "中式餐廳", "小籠包", "美式餐廳", "早午餐", "韓式料理", "泰式料理", "酒吧", "甜點",
 ]
+
+# 規則解析用：口語同義詞 → 標準類別
+CATEGORY_SYNONYMS = {
+    "火鍋": ["麻辣鍋", "涮涮鍋", "鍋物", "石頭鍋", "薑母鴨", "羊肉爐"],
+    "燒肉": ["燒烤", "烤肉"],
+    "日式料理": ["日本料理", "日料", "壽司", "生魚片", "丼飯", "居酒屋"],
+    "拉麵": ["ramen"],
+    "義式料理": ["義大利麵", "義大利菜", "披薩", "pizza", "燉飯"],
+    "平價小吃": ["小吃", "夜市", "便當", "滷肉飯"],
+    "中式餐廳": ["中菜", "合菜", "台菜", "熱炒", "港式", "粵菜"],
+    "美式餐廳": ["漢堡", "牛排", "美式"],
+    "早午餐": ["早餐", "brunch"],
+    "韓式料理": ["韓國菜", "韓國料理", "韓式", "韓料"],
+    "泰式料理": ["泰國菜", "泰國料理", "泰式"],
+    "酒吧": ["喝酒", "調酒", "小酌", "bar"],
+    "甜點": ["蛋糕", "下午茶", "甜食", "冰品"],
+}
+
+CN_DIGITS = {"零": 0, "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4,
+             "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+CN_UNITS = {"十": 10, "百": 100, "千": 1000}
+NUM = r"(\d+(?:\.\d+)?\s*[kK]|\d+|[零一二兩三四五六七八九十百千]+)"
+
+
+def to_number(token: str) -> Optional[int]:
+    """把「1000」「1k」「一千」「一千五」「兩百」轉成整數。"""
+    token = token.strip()
+    if not token:
+        return None
+    if token[-1] in "kK":
+        return int(float(token[:-1].strip()) * 1000)
+    if token.isdigit():
+        return int(token)
+    total, num, last_unit = 0, 0, 1
+    for ch in token:
+        if ch in CN_DIGITS:
+            num = CN_DIGITS[ch]
+        elif ch in CN_UNITS:
+            last_unit = CN_UNITS[ch]
+            total += (num or 1) * last_unit
+            num = 0
+    if num:
+        # 「一千五」= 1500、「十二」= 12
+        total += num * (last_unit // 10 if last_unit >= 100 else 1)
+    return total or None
+
 
 PARSE_PROMPT = f"""你是台北餐廳推薦系統的「搜尋條件抽取器」。
 請根據對話，找出使用者「目前」想要的搜尋條件，只輸出一個 JSON 物件，不要任何其他文字。
@@ -125,30 +171,47 @@ class Pipe:
     # 條件解析：LLM 優先，失敗時退回規則
     # ------------------------------------------------------------------
     def parse_user_query(self, text: str):
-        """規則解析（不需要 LLM）。"""
+        """規則解析（不需要 LLM），支援常見口語說法。"""
         district = None
         category = None
         budget = None
         party_size = None
+        lower = text.lower()
 
+        # 行政區：「大安區」或省略「區」的「大安」
         for d in DISTRICTS:
             if d in text or d.replace("區", "") in text:
                 district = d
                 break
 
+        # 類別：先找標準名稱，再找同義詞（麻辣鍋→火鍋、韓國菜→韓式料理…）
         for c in CATEGORIES:
             if c in text:
                 category = c
                 break
+        if category is None:
+            for c, words in CATEGORY_SYNONYMS.items():
+                if any(w.lower() in lower for w in words):
+                    category = c
+                    break
 
-        party_match = re.search(r'(\d+)\s*個?\s*(?:人|位)', text)
+        # 人數：「3人」「3位」「三個人」「我們6個人」「一個人」
+        party_match = re.search(NUM + r"\s*個?\s*(?:人|位)", text)
         if party_match:
-            party_size = int(party_match.group(1))
+            party_size = to_number(party_match.group(1))
 
-        # 支援「1000元」「1000塊」「1000以內」，也支援「預算1000」「預算 1000 元」
-        budget_match = re.search(r'預算\s*(\d+)|(\d+)\s*(?:元|塊|以內)', text)
-        if budget_match:
-            budget = int(budget_match.group(1) or budget_match.group(2))
+        # 預算：「預算1000」「預算一千」「1000元」「500以內」「一人500」「每人一千」「1k」
+        budget_patterns = [
+            r"預算\s*" + NUM,
+            r"(?:一人|每人|每位|一位)\s*" + NUM,
+            NUM + r"\s*(?:元|塊|以內|以下)",
+            r"(\d+(?:\.\d+)?\s*[kK])",
+        ]
+        for pattern in budget_patterns:
+            m = re.search(pattern, text)
+            if m:
+                budget = to_number(m.group(1))
+                break
 
         return district, category, party_size, budget
 
