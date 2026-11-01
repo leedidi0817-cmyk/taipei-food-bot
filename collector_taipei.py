@@ -100,6 +100,10 @@ if __name__ == "__main__":
     # 執行採集
     data = crawl_restaurants()
 
+    # 沒抓到任何資料時不要覆蓋原本的 CSV（例如 API key 錯誤）
+    if not data:
+        raise SystemExit("❌ 沒有抓到任何餐廳資料，已保留原本的 CSV。請檢查 API key 是否正確。")
+
     # 轉為 DataFrame 並導出 CSV
     df = pd.DataFrame(data)
     csv_output_path = "data/taipei_all_restaurants.csv"
