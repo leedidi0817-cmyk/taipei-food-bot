@@ -12,7 +12,7 @@ from typing import List, Union, Generator, Iterator
 class Pipe:
     def __init__(self):
         # 如果 Open WebUI 是用 Docker 執行的，請將 127.0.0.1 改為 host.docker.internal
-        self.api_url = "http://host.docker.internal:5000/recommend"
+        self.api_url = "http://127.0.0.1:5000/recommend"
         # 若 Open WebUI 是直接在本機 (非 Docker) 執行，請改用以下網址：
         # self.api_url = "http://127.0.0.1:5000/recommend"
 
@@ -46,9 +46,10 @@ class Pipe:
         if party_match:
             party_size = int(party_match.group(1))
 
-        budget_match = re.search(r'(\d+)\s*(?:元|塊|以內|預算)', text)
+        # 支援「1000元」「1000塊」「1000以內」，也支援「預算1000」「預算 1000 元」
+        budget_match = re.search(r'預算\s*(\d+)|(\d+)\s*(?:元|塊|以內)', text)
         if budget_match:
-            budget = int(budget_match.group(1))
+            budget = int(budget_match.group(1) or budget_match.group(2))
 
         return district, category, party_size, budget
 
