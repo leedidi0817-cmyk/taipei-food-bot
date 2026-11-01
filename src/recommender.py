@@ -51,14 +51,15 @@ def maps_link(row):
     return url
 
 
-def filter_restaurants(district=None, category=None, party_size=None, budget=None, top_n=5):
+def search_restaurants(district=None, category=None, party_size=None, budget=None, top_n=5):
+    """篩選並排序餐廳。回傳 (DataFrame, None)；失敗或沒結果時回傳 (None, 錯誤訊息)。"""
     if not os.path.exists(DF_PATH):
-        return f"❌ 找不到資料庫檔案：{DF_PATH}，請確認是否已執行採集腳本。"
+        return None, f"❌ 找不到資料庫檔案：{DF_PATH}，請確認是否已執行採集腳本。"
 
     try:
         df = pd.read_csv(DF_PATH)
     except Exception as e:
-        return f"❌ 資料庫讀取失敗: {e}"
+        return None, f"❌ 資料庫讀取失敗: {e}"
 
     # 1. 行政區篩選
     if district and district != "全區":
@@ -77,15 +78,19 @@ def filter_restaurants(district=None, category=None, party_size=None, budget=Non
         df = df[df['min_price'] <= budget]
 
     if df.empty:
-        return "⚠️ 沒有找到完全符合條件的餐廳，建議放寬預算或地區條件！"
+        return None, "⚠️ 沒有找到完全符合條件的餐廳，建議放寬預算或地區條件！"
 
     # 5. 依加權推薦指數排序
     df = df.copy()
     df["score"] = compute_scores(df, budget)
     df = df.sort_values(by="score", ascending=False)
+    results = df.head(top_n).copy()
+    results["maps_url"] = results.apply(maps_link, axis=1)
+    return results, None
 
-    results = df.head(top_n)
 
+def format_results(results):
+    """把餐廳結果轉成聊天介面顯示的文字。"""
     output = []
     for _, row in results.iterrows():
         output.append(
@@ -94,10 +99,23 @@ def filter_restaurants(district=None, category=None, party_size=None, budget=Non
             f"⭐ 評分: {row['rating']} ({int(row['user_ratings_total'])} 則評論)\n"
             f"💰 約略預算: ${row['min_price']} - ${row['max_price']} / 人\n"
             f"🏠 地址: {row['address']}\n"
-            f"🗺️ [在 Google Maps 開啟]({maps_link(row)})\n"
+            f"🗺️ [在 Google Maps 開啟]({row['maps_url']})\n"
         )
-
     return "\n---\n".join(output)
+
+
+def to_records(results):
+    """給 LLM 寫推薦理由用的精簡資料。"""
+    cols = ["name", "district", "category", "rating", "user_ratings_total",
+            "min_price", "max_price", "score"]
+    return [{k: (v.item() if hasattr(v, "item") else v) for k, v in r.items()}
+            for r in results[cols].to_dict(orient="records")]
+
+
+def filter_restaurants(district=None, category=None, party_size=None, budget=None, top_n=5):
+    """相容舊版：直接回傳顯示用文字。"""
+    results, error = search_restaurants(district, category, party_size, budget, top_n)
+    return error if error else format_results(results)
 
 
 if __name__ == "__main__":

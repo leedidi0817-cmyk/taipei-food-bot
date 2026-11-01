@@ -14,21 +14,42 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from openwebui_pipe import Pipe            # noqa: E402
+from openwebui_pipe import CATEGORIES, DISTRICTS, Pipe  # noqa: E402
 from recommender import DF_PATH, compute_scores  # noqa: E402
 
 FIELDS = ["district", "category", "party_size", "budget"]
 
 
-class OldPipe(Pipe):
-    """原始版本的預算解析（只認「數字+元/塊/以內」）"""
+class OldPipe:
+    """原始版本的規則解析（作為比較基準）"""
     def parse_user_query(self, text):
-        district, category, party_size, _ = super().parse_user_query(text)
-        budget = None
+        district = next((d for d in DISTRICTS if d in text or d.replace("區", "") in text), None)
+        category = next((c for c in CATEGORIES if c in text), None)
+        m = re.search(r'(\d+)\s*(?:人|位)', text)
+        party_size = int(m.group(1)) if m else None
         m = re.search(r'(\d+)\s*(?:元|塊|以內|預算)', text)
-        if m:
-            budget = int(m.group(1))
+        budget = int(m.group(1)) if m else None
         return district, category, party_size, budget
+
+
+class LLMParser:
+    """用 LLM 解析（需要環境變數 LLM_API_KEY，可選 LLM_BASE_URL、LLM_MODEL）"""
+    def __init__(self):
+        self.pipe = Pipe()
+        self.pipe.valves.LLM_API_KEY = os.environ["LLM_API_KEY"]
+        if os.environ.get("LLM_BASE_URL"):
+            self.pipe.valves.LLM_BASE_URL = os.environ["LLM_BASE_URL"]
+        if os.environ.get("LLM_MODEL"):
+            self.pipe.valves.LLM_MODEL = os.environ["LLM_MODEL"]
+        self.failures = 0
+
+    def parse_user_query(self, text):
+        try:
+            return self.pipe.parse_with_llm([{"role": "user", "content": text}])
+        except Exception as e:
+            self.failures += 1
+            print(f"  ⚠️ LLM 失敗：{text}（{e}）")
+            return None, None, None, None
 
 
 def norm(v):
@@ -82,9 +103,17 @@ def eval_ranking():
 
 if __name__ == "__main__":
     tests = pd.read_csv(os.path.join(ROOT, "eval", "test_queries.csv"), dtype=str)
-    eval_parser("舊版解析", OldPipe(), tests)
-    new = eval_parser("目前版本解析", Pipe(), tests)
-    out = os.path.join(ROOT, "eval", "parser_results.csv")
-    new.to_csv(out, index=False, encoding="utf-8-sig")
-    print(f"\n逐句結果已存到 {out}")
+    eval_parser("原始版本（規則）", OldPipe(), tests)
+    results = {"rules": eval_parser("目前版本（規則）", Pipe(), tests)}
+    if os.environ.get("LLM_API_KEY"):
+        llm = LLMParser()
+        results["llm"] = eval_parser("LLM 解析", llm, tests)
+        if llm.failures:
+            print(f"  （LLM 呼叫失敗 {llm.failures} 次，這些句子算答錯）")
+    else:
+        print("\n（未設定 LLM_API_KEY，略過 LLM 解析評估）")
+    for name, df in results.items():
+        out = os.path.join(ROOT, "eval", f"parser_results_{name}.csv")
+        df.to_csv(out, index=False, encoding="utf-8-sig")
+    print("\n逐句結果已存到 eval/parser_results_*.csv")
     eval_ranking()
