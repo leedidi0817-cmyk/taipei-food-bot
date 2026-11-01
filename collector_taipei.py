@@ -6,7 +6,9 @@ import pandas as pd
 # ==========================================
 # 1. 設定你的 Google Places API Key
 # ==========================================
-API_KEY = "AIzaSyCZNaua5C_0kjV9R5hzqjvb3ML3FAyg124"  # 👈 請在此處替換成你剛剛複製的 API 金鑰
+API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
+if not API_KEY:
+    raise SystemExit("❌ 請先設定環境變數 GOOGLE_MAPS_API_KEY")
 
 gmaps = googlemaps.Client(key=API_KEY)
 
@@ -26,7 +28,9 @@ CATEGORIES = [
 PRICE_LEVEL_MAP = {
     0: (50, 150),    # 免費/極平價
     1: (100, 300),   # 平價 ($)
-    2: (300, 700),   # 中等 ($$)     3: (700, 1500),  # 中高價 ($$$)     4: (1500, 3000)  # 高檔 ($$$$)
+    2: (300, 700),   # 中等 ($$)
+    3: (700, 1500),  # 中高價 ($$$)
+    4: (1500, 3000)  # 高檔 ($$$$)
 }
 
 def crawl_restaurants():

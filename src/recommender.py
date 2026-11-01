@@ -2,7 +2,8 @@ import os
 import pandas as pd
 
 # 資料庫路徑
-DF_PATH = "data/taipei_all_restaurants.csv"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DF_PATH = os.path.join(BASE_DIR, "data", "taipei_all_restaurants.csv")
 
 def filter_restaurants(district=None, category=None, party_size=None, budget=None, top_n=5):
     if not os.path.exists(DF_PATH):

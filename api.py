@@ -1,5 +1,9 @@
+import os
+import sys
 from flask import Flask, request, jsonify
-from recommender import filter_restaurants # 或直接呼叫 recommender 內的函式
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
+from recommender import filter_restaurants
 
 app = Flask(__name__)
 
