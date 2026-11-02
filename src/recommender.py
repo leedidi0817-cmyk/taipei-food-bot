@@ -89,6 +89,14 @@ def search_restaurants(district=None, category=None, party_size=None, budget=Non
     return results, None
 
 
+def price_text(row):
+    """Google 的「$1-200」代表 200 元以下，顯示成比較自然的文字。"""
+    low, high = int(row["min_price"]), int(row["max_price"])
+    if low <= 1:
+        return f"${high} 以下 / 人"
+    return f"${low} - ${high} / 人"
+
+
 def format_results(results):
     """把餐廳結果轉成聊天介面顯示的文字。"""
     output = []
@@ -97,7 +105,7 @@ def format_results(results):
             f"📍 **{row['name']}** ({row['district']} - {row['category']})\n"
             f"🏆 推薦指數: {row['score']} / 100\n"
             f"⭐ 評分: {row['rating']} ({int(row['user_ratings_total'])} 則評論)\n"
-            f"💰 約略預算: ${row['min_price']} - ${row['max_price']} / 人\n"
+            f"💰 約略預算: {price_text(row)}\n"
             f"🏠 地址: {row['address']}\n"
             f"🗺️ [在 Google Maps 開啟]({row['maps_url']})\n"
         )
